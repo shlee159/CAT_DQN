@@ -1,31 +1,38 @@
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from collections import namedtuple
 import math
 import random
-import pandas
+import pandas as pd
 import datetime
 
 from CATENVtrain import CATEnv
 from memory_dqn import ReplayMemory
 from models_dqn import *
 
+import argparse
+
 PATH = "train_data"
 
-Transition = namedtuple(
-    'Transition',
-    ('state', 'action', 'next_state', 'reward')
-)
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('iterations', type=int)
+    parser.add_argument('--epsilon', default='linear', type=str, required=False)
+    parser.add_argument('--period', default='200', type=str, required=False, help="perf sampling period")
+
+    args = parser.parse_args()
+    return args
+
+def linear_epsilon(steps_done):
+    return eps_slope * steps_done + EPS_START
 
 def select_action(state):
     global steps_done
     
-    slope = ##
-    eps_threshold = slope * steps_done +1
-    # print("epsilon : ", eps_threshold)
+    eps_threshold = get_eps_threshold(steps_done)
     epsilons.append(eps_threshold)  # save data
 
     state = np.expand_dims(state, axis=0)
@@ -37,23 +44,29 @@ def select_action(state):
         policy_net.train()
 
         if random.random() > eps_threshold:
-            print("maximum qvalued action is selected")
+            print("**maximum qvalued action is selected : ", eps_threshold)
             maxv = qvalues.max(1)
             
             reward_predict_list.append(maxv[0].view(1,1).item())    # save data
             qactions.append(maxv[1].view(1,1).item())   # save data
-            qa_or_ra.append(1)   # save data
+            qa_or_ra.append(1)   # save data (1: q-valued action, 0: random action)
 
             return maxv[1].view(1,1)
         
         else:
+            print("**random action is selected : ", eps_threshold)
             qa = torch.tensor([[random.randrange(5)]], device=device, dtype=torch.long)
             
             reward_predict_list.append(qvalues[0][qa.item()].item())    # save data
-            qa_or_ra.append(0)  # save data
+            qa_or_ra.append(0)  # save data (1: q-valued action, 0: random action)
 
             return qa
 
+
+Transition = namedtuple(
+    'Transition',
+    ('state', 'action', 'next_state', 'reward')
+)
 
 def optimize_model():
     if len(memory) < BATCH_SIZE:
@@ -125,17 +138,27 @@ def train(env, num_iterations):
 
 
 if __name__ == '__main__':
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(device)
+    args = parse_args()
+
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
 
     # hyperparameters
     BATCH_SIZE = 32
     GAMMA = 0.99
     lr = 1e-4
-    #
     EPS_START = 1
     EPS_END = 0.01
-    EPS_DECAY = 1000000
+    if args.epsilon == 'linear':
+        eps_slope = (EPS_END-EPS_START) / (args.iterations-0)
+        get_eps_threshold = linear_epsilon
+    # elif args.epsilon == 'exponential':
+        # EPS_DECAY = 100000
+        # get_eps_threshold = exponential_epsilon
+    #
+    # EPS_START = 1
+    # EPS_END = 0.01
+    # EPS_DECAY = 1000000
     #
     TARGET_UPDATE=1000
     INITIAL_MEMORY=1000
@@ -161,22 +184,24 @@ if __name__ == '__main__':
     start_time = datetime.datetime.now()
     print(start_time)
 
-    env = CATEnv()
+    env = CATEnv(args.period)
+
     steps_done = 0
-    train(env, ###)
+    train(env, args.iterations)
 
     end_time = datetime.datetime.now()
     print(end_time)
-    print("time : ", end_time - start_time)
+    print("elapsed time : ", end_time - start_time)
 
-
+    import os
+    os.makedirs(PATH, exist_ok=True)
     # save model
     torch.save(policy_net.state_dict(), PATH+"/dqn_model_state.pt")
     torch.save(policy_net, PATH+"/dqn_model")
 
-     # save data
-    dict1 = {'reward': reward_list, 'action': action_list, 'reward_predict':reward_predict_list}
-    df = pd.DataFrame(dict1)
+    # save data
+    results = {'reward': reward_list, 'action': action_list, 'reward_predict':reward_predict_list}
+    df = pd.DataFrame(results)
     df.to_csv(PATH+"/pandas_data.csv")
     #
     np.savetxt(PATH+"/reward.csv", reward_list, delimiter=",")
